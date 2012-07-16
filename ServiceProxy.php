@@ -26,6 +26,11 @@ abstract class ServiceProxy {
   protected static $endpoint;
   
   /**
+   * Timeout in seconds to wait for a service call on this client to complete before failing
+   */
+  protected $timeout = 30;
+  
+  /**
    * Service function to call
    */
   protected $action;
@@ -41,6 +46,16 @@ abstract class ServiceProxy {
   protected $header;
   
   /**
+   * Stored response meta data from the most recent request
+   */
+  protected $response_meta;
+  
+  /**
+   * Stored response from the most recent request
+   */
+  protected $response;
+  
+  /**
    * Authentication information for the service
    */
   private $auth;
@@ -49,11 +64,6 @@ abstract class ServiceProxy {
    * Stored data from the most recent request
    */
   private $data = null;
-  
-  /**
-   * Stored response from the most recent request
-   */
-  private $response;
   
   /**
   * Constructor
@@ -113,9 +123,14 @@ abstract class ServiceProxy {
     }
   	
   	try {
-  	  $context = stream_context_create($params); // create the stream
+  	  $context = stream_context_create($params, array(
+  	    'timeout' => $this->timeout,
+  	  )); // create the stream
+  	  
   	  $fileStream = @fopen($this->endpoint . $this->action, 'rb', false, $context); // send the request
+  
   	  $this->response = @stream_get_contents($fileStream); // get results
+  	  $this->response_meta = @stream_get_meta_data($fileStream); // get results
   	} catch (Exception $e) {
   	  $this->logEventHandler($e->getMessage(), ServiceProxy::LOG_ERROR, $e);
   	}
@@ -149,12 +164,12 @@ abstract class ServiceProxy {
     $this->call($action, $method, $data);
     
     try {
-      $response = new SimpleXmlElement($this->getResponse());
+      $this->response = new SimpleXmlElement($this->getResponse());
     } catch (Exception $e) {
       $this->logEventHandler($e->getMessage(), ServiceProxy::LOG_ERROR, $e);
     }
     
-  	return $response;
+  	return $this->response;
   }
   
   /**
