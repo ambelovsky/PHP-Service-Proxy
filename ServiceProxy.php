@@ -81,7 +81,7 @@ abstract class ServiceProxy {
   *
   * @return void
   */
-  protected abstract function logEventHandler($message, $severity, $trace) {
+  protected function logEventHandler($message, $severity, $trace) {
     // override this function to provide logging support
   }
   
@@ -117,7 +117,7 @@ abstract class ServiceProxy {
   	  $fileStream = @fopen($this->endpoint . $this->action, 'rb', false, $context); // send the request
   	  $this->response = @stream_get_contents($fileStream); // get results
   	} catch (Exception $e) {
-  	  logEventHandler($e->getMessage(), ServiceProxy::LOG_ERROR, $e);
+  	  $this->logEventHandler($e->getMessage(), ServiceProxy::LOG_ERROR, $e);
   	}
   	
   	return $this->response;
@@ -151,7 +151,7 @@ abstract class ServiceProxy {
     try {
       $response = new SimpleXmlElement($this->getResponse());
     } catch (Exception $e) {
-      logEventHandler($e->getMessage(), ServiceProxy::LOG_ERROR, $e);
+      $this->logEventHandler($e->getMessage(), ServiceProxy::LOG_ERROR, $e);
     }
     
   	return $response;
