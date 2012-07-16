@@ -10,8 +10,8 @@
 *  http://www.aaronbelovsky.com
 */
 abstract class ServiceProxy {
-  //const LOG_INFO = 1;
-  //const LOG_WARN = 2;
+  const LOG_INFO = 1;
+  const LOG_WARN = 2;
   const LOG_ERROR = 3;
   //const LOG_FATAL = 4;
   
@@ -49,6 +49,11 @@ abstract class ServiceProxy {
    * Stored response meta data from the most recent request
    */
   protected $response_meta;
+  
+  /**
+   * HTTP status code from the response
+   */
+  protected $response_status;
   
   /**
    * Stored response from the most recent request
@@ -96,6 +101,42 @@ abstract class ServiceProxy {
   }
   
   /**
+  * Setter for $response property
+  *
+  * @param mixed $response Response object to assign to the $response property
+  *
+  * @return void
+  */
+  private function setResponse($response) {
+    $this->response = $response;
+  }
+  
+  /**
+  * Setter for all response meta data
+  *
+  * @param string[] $response_meta Array of response meta data
+  *
+  * @return void
+  */
+  private function setResponseMeta($response_meta) {
+    if(!isset($response_meta['wrapper_data'])) {
+      $this->logEventHandler('No meta data available from response.', ServiceProxy::LOG_WARN);
+      return;
+    }
+    
+    $this->response_meta = $response_meta['wrapper_data'];
+    
+    // extract status code from response meta data
+    try {
+      $status_parts = explode(' ', $this->response_meta[0]);
+      $this->response_status = (int) $status_parts[1];
+      unset($status_parts);
+    } catch (Exception $e) {
+      $this->logEventHandler('Unable to retrieve HTTP status code from response.', ServiceProxy::LOG_WARN, $e);
+    }
+  }
+  
+  /**
   * Internal function that sends a request to the service
   *
   * @param string $action
@@ -129,11 +170,16 @@ abstract class ServiceProxy {
   	  
   	  $fileStream = @fopen($this->endpoint . $this->action, 'rb', false, $context); // send the request
   
-  	  $this->response = @stream_get_contents($fileStream); // get results
-  	  $this->response_meta = @stream_get_meta_data($fileStream); // get results
+  	  $this->setResponse(@stream_get_contents($fileStream)); // get results
+  	  $this->setResponseMeta(@stream_get_meta_data($fileStream)); // get results
   	} catch (Exception $e) {
   	  $this->logEventHandler($e->getMessage(), ServiceProxy::LOG_ERROR, $e);
   	}
+  	
+  	if($this->response_status == 404)
+  	  $this->logEventHandler('404: No record found for this request or web service not available.', ServiceProxy::LOG_INFO);
+	  if($this->response_status != 200 && $this->response_status != 404)
+	    $this->logEventHandler('Error ' . $this->response_status . '.', ServiceProxy::LOG_ERROR, $this->response_meta);
   	
   	return $this->response;
   }
