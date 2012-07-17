@@ -192,8 +192,9 @@ abstract class ServiceProxy {
   *
   * @return void
   */
-  protected function authenticate($username, $password = "") {
+  public function authenticate($username, $password = "") {
     $this->auth = base64_encode($username . ':' . $password);
+    return $this;
   }
   
   /**
