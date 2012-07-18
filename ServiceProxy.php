@@ -5,9 +5,9 @@
 * To implement logging, override the logEventHandler($message, $severity, $trace) function.
 *   Severities: 1 = Notice, 2 = Warning, 3 = Error, 4 = Fatal
 *
-* @author Aaron Belovsky
-*  http://www.github.com/ambelovsky/PHP-Service-Proxy
-*  http://www.aaronbelovsky.com
+* @author http://www.aaronbelovsky.com
+*
+* @package ambelovsky
 */
 abstract class ServiceProxy {
   const LOG_INFO = 1;
