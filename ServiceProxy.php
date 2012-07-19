@@ -27,6 +27,21 @@ abstract class ServiceProxy {
   protected static $endpoint;
   
   /**
+   * Globally disables caching regardless of other settings
+   */
+  protected $cache_disable = false;
+  
+  /**
+   * Whether or not service calls should cache by default
+   */
+  protected $cache_by_default = true;
+  
+  /**
+   * Time in seconds that the cache should be maintained before refreshing data
+   */
+  protected $cache_expiration = 300; // default is 5 minutes
+  
+  /**
    * Timeout in seconds to wait for a service call on this client to complete before failing
    */
   protected $timeout = 30;
@@ -88,6 +103,33 @@ abstract class ServiceProxy {
   }
   
   /**
+  * Sets authentication information for a web service.  Must be set prior to sending any requests.
+  *
+  * @param string $username
+  * @param string $password
+  *
+  * @return void
+  */
+  public function authenticate($username, $password = "") {
+    $this->auth = base64_encode($username . ':' . $password);
+    return $this;
+  }
+  
+  /**
+  * Turn caching on by default
+  */
+  public function cacheOn() {
+    $this->cache_by_default = true;
+  }
+  
+  /**
+  * Turn caching off by default
+  */
+  public function cacheOff() {
+    $this->cache_by_default = false;
+  }
+  
+  /**
   * Event handler for implementing logging support
   *
   * @param string $message Primary log message
@@ -97,8 +139,174 @@ abstract class ServiceProxy {
   *
   * @return void
   */
-  protected function logEventHandler($message, $severity, $trace) {
+  protected function logEventHandler($message, $severity = ServiceProxy::LOG_INFO, $trace = array()) {
     // override this function to provide logging support
+  }
+  
+  /**
+  * Override this function to implement caching support
+  *
+  * @param mixed[] $request
+  * @param mixed $response
+  *
+  * @return void
+  */
+  protected function commitToCache(&$request, &$response) {
+    // override to implement caching support
+  }
+  
+  /**
+  * Override this function to implement caching support
+  *
+  * @param mixed[] $request
+  *
+  * @return mixed[]|null The response Array must contain a top-level 'timestamp' field
+  *  in order to be considered valid.  Optionally, a response Array may include an 'expiration'
+  *  field that should be the time in seconds until the cached object will expire.
+  */
+  protected function queryFromCache(&$request) {
+    return null;
+  }
+  
+  /**
+  * Removes a single object from cache.  Override this function to implement caching.
+  *
+  * @param mixed $request Request to clear the response cache for
+  *
+  * @return void
+  */
+  protected function removeFromCache(&$request) {
+    
+  }
+  
+  /**
+  * Prunes expired cached responses.  Override this function to implement caching.  Use
+  * $this->getCacheExpiration() to retrieve the time in seconds that cached responses should
+  * be available.
+  *
+  * @return void
+  */
+  protected function pruneCache() {
+    
+  }
+  
+  /**
+  * Clears all cached objects.  Override this function to implement caching.
+  *
+  * @return void
+  */
+  protected function clearCache() {
+    
+  }
+  
+  /**
+  * Send a request expecting an XML response from the answering service
+  *
+  * @param string $action
+  * @param string $method
+  * @param mixed[] $data Data to send in the request to the service
+  *
+  * @return mixed[] XML web service response
+  */
+  protected function callXml($action, $method = "GET", &$data = array()) {
+    $this->header = array_merge($this->header, array('Accept: text/xml'));
+    $this->call($action, $method, $data);
+    
+    try {
+      $this->setResponse(new SimpleXmlElement($this->getResponse()));
+    } catch (Exception $e) {
+      $this->logEventHandler($e->getMessage(), ServiceProxy::LOG_ERROR, $e);
+    }
+    
+  	return $this->getResponse();
+  }
+  
+  /**
+  * Event handler for implementing status detection.  By default, this function logs anything other than a status "200 OK".
+  *
+  * @param mixed $response Web service response
+  * @param integer $response_status HTTP status code
+  *
+  * @return void
+  */
+  protected function responseStatusEventHandler(&$response = null, &$response_status = null) {
+    if(!isset($response)) $response = &$this->getResponse();
+    if(!isset($response_status)) $response_status = &$this->response_status;
+    
+    if($this->response_status == 404)
+      $this->logEventHandler('404: No record found for this request or web service not available.', ServiceProxy::LOG_INFO);
+    if($this->response_status != 200 && $this->response_status != 404)
+      $this->logEventHandler('Error ' . $this->response_status . '.', ServiceProxy::LOG_ERROR, $this->response_meta);
+  }
+  
+  /**
+  * Retrieves the expiration time in seconds for any given request object.
+  *
+  * @param mixed[] $request
+  *
+  * @return integer Expiration time in seconds
+  */
+  protected function getCacheExpiration($request = null) {
+    if(!isset($request) || !isset($request['expiration'])) return $this->cache_expiration;
+    return $request['expiration'];
+  }
+  
+  /**
+  * Retrieves a cached response for a given request if the response exists.  If no response exists,
+  * this function will call the appropriate service, cache the response, and return the cached response.
+  *
+  * @param mixed[] $request
+  * @param boolean $cache True to force caching, false to force no caching
+  */
+  protected function getCachedResponse(&$request, $cache = null) {
+    if(!isset($cache)) $cache = $this->cache_by_default;
+  
+    if(!$this->cache_disable && $cache) {
+      $response = $this->queryFromCache($request);
+      
+      if( // cached response is valid
+        isset($response)
+        && !empty($response)
+        && isset($response['timestamp'])
+        && $response['timestamp'] > time() - $this->getCacheExpiration($request)
+      ) {
+        unset($response['timestamp'], $response['expiration']);
+        return $response;
+      }
+    }
+    
+    // fetch a response using the request
+    $this->sendRequest($request);
+    
+    // cache the response
+    $this->commitToCache($request, $this->getResponse());
+    
+    // return the cached response
+    return $this->getResponse();
+  }
+  
+  /**
+  * Resubmits the last request
+  * @return mixed Web service response
+  */
+  protected function retry() {
+    return $this->call($this->data);
+  }
+  
+  /**
+  * Resubmits the last request
+  * @return mixed Web service response
+  */
+  protected function retryXml() {
+    return $this->callXml($this->data);
+  }
+  
+  /**
+  * Returns the read-only response
+  * @return mixed Web service response
+  */
+  protected function getResponse() {
+    return $this->response;
   }
   
   /**
@@ -146,7 +354,23 @@ abstract class ServiceProxy {
   *
   * @return mixed Web service response
   */
-  private function call(&$action, &$method = "GET", &$data = array()) {
+  private function call($action, $method = "GET", &$data = array()) {
+    $request = $this->getRequest($action, $method, $data);
+    $this->getCachedResponse($request);
+  	
+  	return $this->getResponse();
+  }
+  
+  /**
+  * Internal function that sends a request to the service
+  *
+  * @param string $action
+  * @param string $method
+  * @param mixed[] $data Data to send in the request to the service
+  *
+  * @return mixed[] Web service request
+  */
+  private function getRequest($action, $method = "GET", &$data = array()) {
     $this->action = $action;
     $this->method = $method;
     
@@ -158,90 +382,43 @@ abstract class ServiceProxy {
   	
     // build an http query to pass to the service from given object data
     if(!empty($data)) {
-      $this->data &= $data;
+      $this->data = $data;
   	  $query = http_build_query($data);
     	if($this->method != "GET") $params['http']['content'] = $query;
-    	else $this->endpoint .= $query;
+    	else $this->action .= $query;
     }
   	
-  	try {
-  	  $context = stream_context_create($params, array(
+  	return array(
+  	  'endpoint' => $this->endpoint,
+  	  'action' => $this->action,
+  	  'method' => $this->method,
+  	  'params' => $params,
+  	  'settings' => array(
   	    'timeout' => $this->timeout,
-  	  )); // create the stream
-  	  
-  	  $fileStream = @fopen($this->endpoint . $this->action, 'rb', false, $context); // send the request
+  	  ),
+  	);
+  }
   
-  	  $this->setResponse(@stream_get_contents($fileStream)); // get results
-  	  $this->setResponseMeta(@stream_get_meta_data($fileStream)); // get results
+  /**
+  * Sends a request to the web service
+  *
+  * @param mixed[] $request
+  *
+  * @return mixed[] XML web service response
+  */
+  private function sendRequest($request) {
+    try {
+      $context = stream_context_create($request['params'], $request['settings']); // create the stream
+  	  $file_stream = @fopen($request['endpoint'] . $request['action'], 'rb', false, $context); // send the request
+  
+  	  $this->setResponse(@stream_get_contents($file_stream)); // get results
+  	  $this->setResponseMeta(@stream_get_meta_data($file_stream)); // get results
   	} catch (Exception $e) {
   	  $this->logEventHandler($e->getMessage(), ServiceProxy::LOG_ERROR, $e);
   	}
   	
-  	if($this->response_status == 404)
-  	  $this->logEventHandler('404: No record found for this request or web service not available.', ServiceProxy::LOG_INFO);
-	  if($this->response_status != 200 && $this->response_status != 404)
-	    $this->logEventHandler('Error ' . $this->response_status . '.', ServiceProxy::LOG_ERROR, $this->response_meta);
-  	
-  	return $this->response;
-  }
-  
-  /**
-  * Sets authentication information for a web service.  Must be set prior to sending any requests.
-  *
-  * @param string $username
-  * @param string $password
-  *
-  * @return void
-  */
-  public function authenticate($username, $password = "") {
-    $this->auth = base64_encode($username . ':' . $password);
-    return $this;
-  }
-  
-  /**
-  * Send a request expecting an XML response from the answering service
-  *
-  * @param string $action
-  * @param string $method
-  * @param mixed[] $data Data to send in the request to the service
-  *
-  * @return mixed[] XML web service response
-  */
-  protected function callXml(&$action, &$method = "GET", &$data = array()) {
-    $this->header = array_merge($this->header, array('Accept: text/xml'));
-    $this->call($action, $method, $data);
-    
-    try {
-      $this->response = new SimpleXmlElement($this->getResponse());
-    } catch (Exception $e) {
-      $this->logEventHandler($e->getMessage(), ServiceProxy::LOG_ERROR, $e);
-    }
-    
-  	return $this->response;
-  }
-  
-  /**
-  * Resubmits the last request
-  * @return mixed Web service response
-  */
-  protected function retry() {
-    return $this->call($this->data);
-  }
-  
-  /**
-  * Resubmits the last request
-  * @return mixed Web service response
-  */
-  protected function retryXml() {
-    return $this->callXml($this->data);
-  }
-  
-  /**
-  * Returns the read-only response
-  * @return mixed Web service response
-  */
-  protected function getResponse() {
-    return $this->response;
+  	$this->responseStatusEventHandler();
+  	return $this->getResponse();
   }
 }
 
