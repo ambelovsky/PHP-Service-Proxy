@@ -42,6 +42,16 @@ abstract class ServiceProxy {
   protected $cache_expiration = 300; // default is 5 minutes
   
   /**
+   * Whether or not old cached data should be automatically removed from the data store
+   */
+  protected $cache_auto_prune = true;
+  
+  /**
+   * Retains the default cache expiration time whenever it has been temporarily modified
+   */
+  private $cache_expiration_memory = 0;
+  
+  /**
    * Timeout in seconds to wait for a service call on this client to complete before failing
    */
   protected $timeout = 30;
@@ -108,7 +118,7 @@ abstract class ServiceProxy {
   * @param string $username
   * @param string $password
   *
-  * @return void
+  * @return ServiceProxy
   */
   public function authenticate($username, $password = "") {
     $this->auth = base64_encode($username . ':' . $password);
@@ -117,8 +127,12 @@ abstract class ServiceProxy {
   
   /**
   * Turn caching on by default
+  *
+  * @param integer $expiration Time in seconds until the cached objects should expire.
+  *  Anytime $expiration is not provided, the default expiration time will be used.
   */
-  public function cacheOn() {
+  public function cacheOn($expiration = null) {
+    $this->setCacheExpiration($expiration);
     $this->cache_by_default = true;
   }
   
@@ -127,6 +141,34 @@ abstract class ServiceProxy {
   */
   public function cacheOff() {
     $this->cache_by_default = false;
+  }
+  
+  /**
+  * Sets the cache expiration time to use for cached objects.  If no expiration time is
+  * provided, this will reset the cache expiration time to the default.
+  *
+  * @param integer $expiration Time in seconds until the cached objects should expire.
+  *  Anytime $expiration is not provided, the default expiration time will be used.
+  */
+  public function setCacheExpiration($expiration = null) {
+    if(!isset($expiration) && $this->cache_expiration_memory > 0) {
+      $this->cache_expiration = $this->cache_expiration_memory;
+    } else {
+      $this->cache_expiration_memory = $this->cache_expiration;
+      $this->cache_expiration = $expiration;
+    }
+  }
+  
+  /**
+  * Retrieves the expiration time in seconds for any given request object.
+  *
+  * @param mixed[] $request
+  *
+  * @return integer Expiration time in seconds
+  */
+  protected function getCacheExpiration($request = null) {
+    if(!isset($request) || !isset($request['expiration'])) return $this->cache_expiration;
+    return $request['expiration'];
   }
   
   /**
@@ -144,12 +186,41 @@ abstract class ServiceProxy {
   }
   
   /**
+  * Removes a single object from cache.  Override this function to implement caching.
+  *
+  * @param mixed $request Request to clear the response cache for
+  *
+  * @return void
+  */
+  public function removeFromCache(&$request) {
+    
+  }
+  
+  /**
+  * Clears all cached objects.  Override this function to implement caching.
+  *
+  * @return void
+  */
+  public function clearCache() {
+    
+  }
+  
+  /**
   * Override this function to implement caching support
   *
   * @param mixed[] $request
   * @param mixed $response
   *
   * @return void
+  *
+  * @example
+  *  $stored_data = array(
+  *    'timestamp' => time(),
+  *    'expiration' => $this->getCacheExpiration(),
+  *    'request' => $request,
+  *    'response' => $response,
+  *  );
+  *  // enter this data into a super fast data store
   */
   protected function commitToCache(&$request, &$response) {
     // override to implement caching support
@@ -160,23 +231,13 @@ abstract class ServiceProxy {
   *
   * @param mixed[] $request
   *
-  * @return mixed[]|null The response Array must contain a top-level 'timestamp' field
-  *  in order to be considered valid.  Optionally, a response Array may include an 'expiration'
-  *  field that should be the time in seconds until the cached object will expire.
+  * @return mixed[]|null Array response containing the following top-level fields
+  *  -timestamp: the time() that this object was entered into cache
+  *  -response: the actual response data
+  *  -expiration: (optional) object-specific expiration time in seconds
   */
   protected function queryFromCache(&$request) {
     return null;
-  }
-  
-  /**
-  * Removes a single object from cache.  Override this function to implement caching.
-  *
-  * @param mixed $request Request to clear the response cache for
-  *
-  * @return void
-  */
-  protected function removeFromCache(&$request) {
-    
   }
   
   /**
@@ -191,12 +252,38 @@ abstract class ServiceProxy {
   }
   
   /**
-  * Clears all cached objects.  Override this function to implement caching.
+  * Retrieves a cached response for a given request if the response exists.  If no response exists,
+  * this function will call the appropriate service, cache the response, and return the cached response.
   *
-  * @return void
+  * @param mixed[] $request
+  * @param boolean $cache True to force caching, false to force no caching
   */
-  protected function clearCache() {
+  protected function getCachedResponse(&$request, $cache = null) {
+    if(!isset($cache)) $cache = $this->cache_by_default;
+    if($this->cache_auto_prune) $this->pruneCache(); // auto-prune old cached objects
+  
+    if(!$this->cache_disable && $cache) {
+      $response = $this->queryFromCache($request);
+      
+      if( // cached response is valid
+        isset($response)
+        && !empty($response)
+        && isset($response['timestamp'])
+        && $response['timestamp'] > time() - $this->getCacheExpiration($request)
+      ) {
+        unset($response['timestamp'], $response['expiration']);
+        return $response['response'];
+      }
+    }
     
+    // fetch a response using the request
+    $this->sendRequest($request);
+    
+    // cache the response
+    $this->commitToCache($request, $this->getResponse());
+    
+    // return the cached response
+    return $this->getResponse();
   }
   
   /**
@@ -240,52 +327,6 @@ abstract class ServiceProxy {
   }
   
   /**
-  * Retrieves the expiration time in seconds for any given request object.
-  *
-  * @param mixed[] $request
-  *
-  * @return integer Expiration time in seconds
-  */
-  protected function getCacheExpiration($request = null) {
-    if(!isset($request) || !isset($request['expiration'])) return $this->cache_expiration;
-    return $request['expiration'];
-  }
-  
-  /**
-  * Retrieves a cached response for a given request if the response exists.  If no response exists,
-  * this function will call the appropriate service, cache the response, and return the cached response.
-  *
-  * @param mixed[] $request
-  * @param boolean $cache True to force caching, false to force no caching
-  */
-  protected function getCachedResponse(&$request, $cache = null) {
-    if(!isset($cache)) $cache = $this->cache_by_default;
-  
-    if(!$this->cache_disable && $cache) {
-      $response = $this->queryFromCache($request);
-      
-      if( // cached response is valid
-        isset($response)
-        && !empty($response)
-        && isset($response['timestamp'])
-        && $response['timestamp'] > time() - $this->getCacheExpiration($request)
-      ) {
-        unset($response['timestamp'], $response['expiration']);
-        return $response;
-      }
-    }
-    
-    // fetch a response using the request
-    $this->sendRequest($request);
-    
-    // cache the response
-    $this->commitToCache($request, $this->getResponse());
-    
-    // return the cached response
-    return $this->getResponse();
-  }
-  
-  /**
   * Resubmits the last request
   * @return mixed Web service response
   */
@@ -307,6 +348,22 @@ abstract class ServiceProxy {
   */
   protected function getResponse() {
     return $this->response;
+  }
+  
+  /**
+  * Internal function that sends a request to the service
+  *
+  * @param string $action
+  * @param string $method
+  * @param mixed[] $data Data to send in the request to the service
+  *
+  * @return mixed Web service response
+  */
+  private function call($action, $method = "GET", &$data = array()) {
+    $request = $this->getRequest($action, $method, $data);
+    $this->getCachedResponse($request);
+  	
+  	return $this->getResponse();
   }
   
   /**
@@ -343,22 +400,6 @@ abstract class ServiceProxy {
     } catch (Exception $e) {
       $this->logEventHandler('Unable to retrieve HTTP status code from response.', ServiceProxy::LOG_WARN, $e);
     }
-  }
-  
-  /**
-  * Internal function that sends a request to the service
-  *
-  * @param string $action
-  * @param string $method
-  * @param mixed[] $data Data to send in the request to the service
-  *
-  * @return mixed Web service response
-  */
-  private function call($action, $method = "GET", &$data = array()) {
-    $request = $this->getRequest($action, $method, $data);
-    $this->getCachedResponse($request);
-  	
-  	return $this->getResponse();
   }
   
   /**
