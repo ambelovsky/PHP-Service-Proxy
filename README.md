@@ -62,10 +62,10 @@ ServiceProxy should always be inherited and built upon as opposed to being refer
 		* @return ServiceClient Instance of service client
 		*/
 		function __construct(&$endpoint = null, &$header = array(), &$timeout = 30) {
-		// Allow authentication and headers to be reset in future instantiations when necessary
-		if(isset($this->header)) $header = array_merge($header, $this->header);
+			// Allow authentication and headers to be reset in future instantiations when necessary
+			if(isset($this->header)) $header = array_merge($header, $this->header);
 
-		parent::__construct($endpoint, $header, ServiceClient::$user_agent);
+			parent::__construct($endpoint, $header, ServiceClient::$user_agent);
 		}
 
 		/**
@@ -77,14 +77,14 @@ ServiceProxy should always be inherited and built upon as opposed to being refer
 		* @return void
 		*/
 		protected static function commitToCache(&$response) {
-		$stored_data = array(
-		  'timestamp' => time(),
-		  'expiration' => $this->getCacheExpiration(),
-		  'request' => $request,
-		  'response' => $response,
-		);
+			$stored_data = array(
+			  'timestamp' => time(),
+			  'expiration' => $this->getCacheExpiration(),
+			  'request' => $request,
+			  'response' => $response,
+			);
 
-		// enter this into a super fast database
+			// enter this into a super fast database
 		}
 
 		/**
@@ -95,17 +95,17 @@ ServiceProxy should always be inherited and built upon as opposed to being refer
 		* @return mixed[]|null Array of response data
 		*/
 		protected static function queryFromCache(&$request) {
-		return null;
+			return null;
 
-		// get data from a super fast data store
-		$stored_data = array(
-		  'timestamp' => time() - 60, // fake a minute ago
-		  'expiration' => $this->getCacheExpiration(),
-		  'request' => $request,
-		  'response' => "Some data twas cached..."
-		);
+			// get data from a super fast data store
+			$stored_data = array(
+			  'timestamp' => time() - 60, // fake a minute ago
+			  'expiration' => $this->getCacheExpiration(),
+			  'request' => $request,
+			  'response' => "Some data twas cached..."
+			);
 
-		return $stored_data;
+			return $stored_data;
 		}
 
 		/**
