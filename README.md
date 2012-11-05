@@ -22,8 +22,8 @@ ServiceProxy should always be inherited and built upon as opposed to being refer
 
 `
 	/**
-	 * Web service client base class for building drivers to different web services
-	 */
+	* Web service client base class for building drivers to different web services
+	*/
 	abstract class ServiceClient extends ServiceProxy {
 	  protected static $user_agent = "Service Client";
 	  
